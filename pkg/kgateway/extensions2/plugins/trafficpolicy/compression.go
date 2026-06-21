@@ -1,7 +1,10 @@
 package trafficpolicy
 
 import (
+	"fmt"
+	"hash/fnv"
 	"slices"
+	"strconv"
 
 	envoycorev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	brotlicompressorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/compression/brotli/compressor/v3"
@@ -121,11 +124,10 @@ func constructCompression(spec kgateway.TrafficPolicySpec, out *trafficPolicySpe
 	}
 }
 
-// compressorEntry is a single codec's compressor filter installed in a filter chain.
+// compressorEntry is a single compressor filter installed in a filter chain.
 type compressorEntry struct {
-	// filterName is the unique HTTP filter name for this codec's compressor.
+	// filterName is the unique HTTP filter name for this compressor.
 	filterName string
-	library    kgateway.CompressionLibrary
 	compressor *compressorv3.Compressor
 }
 
@@ -157,23 +159,39 @@ func (p *trafficPolicyPluginGwPass) handleCompression(fcn string, pCtxTypedFilte
 	}
 	// Offer each selected codec on the route. Envoy negotiates the codec to use against the
 	// request's Accept-Encoding header; the filter-chain order (preference order) breaks ties.
+	//
+	// Routes on a Gateway share one filter chain, and Envoy has no per-route override for
+	// min_content_length/content_type, so those settings must live on the listener-level
+	// compressor filter. Routes that compress the same codec with different settings therefore
+	// need distinct filters: key each filter by codec AND settings, and enable the matching one
+	// per route.
 	for _, library := range comp.libraries {
-		filterName := compressorFilterNameFor(library)
+		filterName := compressorFilterNameForConfig(library, comp.minContentLength, comp.contentTypes)
 		pCtxTypedFilterConfig.AddTypedConfig(filterName, EnableFilterPerRoute())
 
-		// Ensure a disabled baseline compressor filter for this codec is present in the chain.
-		if !hasCompressorForLibrary(p.compressorInChain[fcn], library) {
+		if !hasCompressorNamed(p.compressorInChain[fcn], filterName) {
 			p.compressorInChain[fcn] = append(p.compressorInChain[fcn], compressorEntry{
 				filterName: filterName,
-				library:    library,
 				compressor: newCompressor(library, comp.minContentLength, comp.contentTypes),
 			})
 		}
 	}
 }
 
-// compressorFilterNameFor returns the unique HTTP filter name for a codec's compressor.
-// Gzip keeps the historical name so existing single-codec config stays byte-identical.
+// compressorFilterName returns the HTTP filter name for a codec with the given settings.
+// Default settings keep the codec's historical name so existing config stays byte-identical;
+// custom settings get a deterministic suffix so routes with differing settings do not collide
+// on the shared filter chain.
+func compressorFilterNameForConfig(library kgateway.CompressionLibrary, minContentLength *uint32, contentTypes []string) string {
+	base := compressorFilterNameFor(library)
+	if minContentLength == nil && len(contentTypes) == 0 {
+		return base
+	}
+	return base + "." + settingsHash(minContentLength, contentTypes)
+}
+
+// compressorFilterNameFor returns the base HTTP filter name for a codec. Gzip keeps the
+// historical name so existing single-codec config stays byte-identical.
 func compressorFilterNameFor(library kgateway.CompressionLibrary) string {
 	switch library {
 	case kgateway.CompressionBrotli:
@@ -185,13 +203,37 @@ func compressorFilterNameFor(library kgateway.CompressionLibrary) string {
 	}
 }
 
-func hasCompressorForLibrary(entries []compressorEntry, library kgateway.CompressionLibrary) bool {
+// settingsHash is a deterministic short hash of the response-direction settings, used to give
+// compressors with differing settings distinct filter names.
+func settingsHash(minContentLength *uint32, contentTypes []string) string {
+	h := fnv.New32a()
+	if minContentLength != nil {
+		fmt.Fprintf(h, "min=%d;", *minContentLength)
+	}
+	for _, ct := range sortedContentTypes(contentTypes) {
+		fmt.Fprintf(h, "ct=%s;", ct)
+	}
+	return strconv.FormatUint(uint64(h.Sum32()), 16)
+}
+
+func hasCompressorNamed(entries []compressorEntry, filterName string) bool {
 	for i := range entries {
-		if entries[i].library == library {
+		if entries[i].filterName == filterName {
 			return true
 		}
 	}
 	return false
+}
+
+// sortedContentTypes returns the content types in a stable order so equivalent allowlists
+// produce identical filter names and config regardless of the order the user listed them.
+func sortedContentTypes(contentTypes []string) []string {
+	if len(contentTypes) == 0 {
+		return nil
+	}
+	out := slices.Clone(contentTypes)
+	slices.Sort(out)
+	return out
 }
 
 // newCompressor builds a disabled baseline compressor filter for the given codec, using
@@ -208,7 +250,7 @@ func newCompressor(library kgateway.CompressionLibrary, minContentLength *uint32
 		CompressorLibrary: compressorLibraryFor(library),
 	}
 	if minContentLength != nil || len(contentTypes) > 0 {
-		common := &compressorv3.Compressor_CommonDirectionConfig{ContentType: contentTypes}
+		common := &compressorv3.Compressor_CommonDirectionConfig{ContentType: sortedContentTypes(contentTypes)}
 		if minContentLength != nil {
 			common.MinContentLength = wrapperspb.UInt32(*minContentLength)
 		}

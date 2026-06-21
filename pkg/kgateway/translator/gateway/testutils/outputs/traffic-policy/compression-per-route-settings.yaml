@@ -22,7 +22,7 @@ Listeners:
         '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
         httpFilters:
         - disabled: true
-          name: envoy.filters.http.compressor.33563580
+          name: envoy.filters.http.compressor.a2e49a11
           typedConfig:
             '@type': type.googleapis.com/envoy.extensions.filters.http.compressor.v3.Compressor
             compressorLibrary:
@@ -37,8 +37,18 @@ Listeners:
               commonConfig:
                 contentType:
                 - application/json
-                - text/html
-                minContentLength: 256
+        - disabled: true
+          name: envoy.filters.http.compressor
+          typedConfig:
+            '@type': type.googleapis.com/envoy.extensions.filters.http.compressor.v3.Compressor
+            compressorLibrary:
+              name: envoy.compression.gzip.compressor
+              typedConfig:
+                '@type': type.googleapis.com/envoy.extensions.compression.gzip.compressor.v3.Gzip
+            requestDirectionConfig:
+              commonConfig:
+                enabled:
+                  defaultValue: false
         - name: envoy.filters.http.router
           typedConfig:
             '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -58,8 +68,8 @@ Routes:
   name: listener~8080
   virtualHosts:
   - domains:
-    - www.example.com
-    name: listener~8080~www_example_com
+    - custom.example.com
+    name: listener~8080~custom_example_com
     routes:
     - match:
         prefix: /
@@ -67,13 +77,32 @@ Routes:
         filterMetadata:
           merge.TrafficPolicy.gateway.kgateway.dev:
             compression:
-            - gateway.kgateway.dev/TrafficPolicy/default/compression-policy
-      name: listener~8080~www_example_com-route-0-httproute-example-route-default-0-0-matcher-0
+            - gateway.kgateway.dev/TrafficPolicy/default/compression-custom
+      name: listener~8080~custom_example_com-route-0-httproute-route-custom-default-0-0-matcher-0
       route:
         cluster: kube_default_example-svc_80
         clusterNotFoundResponseCode: INTERNAL_SERVER_ERROR
       typedPerFilterConfig:
-        envoy.filters.http.compressor.33563580:
+        envoy.filters.http.compressor.a2e49a11:
+          '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+          config: {}
+  - domains:
+    - default.example.com
+    name: listener~8080~default_example_com
+    routes:
+    - match:
+        prefix: /
+      metadata:
+        filterMetadata:
+          merge.TrafficPolicy.gateway.kgateway.dev:
+            compression:
+            - gateway.kgateway.dev/TrafficPolicy/default/compression-default
+      name: listener~8080~default_example_com-route-0-httproute-route-default-default-0-0-matcher-0
+      route:
+        cluster: kube_default_example-svc_80
+        clusterNotFoundResponseCode: INTERNAL_SERVER_ERROR
+      typedPerFilterConfig:
+        envoy.filters.http.compressor:
           '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
           config: {}
 Statuses:
@@ -96,7 +125,7 @@ Statuses:
         status: "True"
         type: ResolvedRefs
       listeners:
-      - attachedRoutes: 1
+      - attachedRoutes: 2
         conditions:
         - lastTransitionTime: null
           message: Successfully accepted Listener
@@ -125,7 +154,25 @@ Statuses:
         - group: gateway.networking.k8s.io
           kind: GRPCRoute
   httpRoutes:
-    default/example-route:
+    default/route-custom:
+      parents:
+      - conditions:
+        - lastTransitionTime: null
+          message: Successfully accepted Route
+          reason: Accepted
+          status: "True"
+          type: Accepted
+        - lastTransitionTime: null
+          message: Successfully resolved all references
+          reason: ResolvedRefs
+          status: "True"
+          type: ResolvedRefs
+        controllerName: kgateway
+        parentRef:
+          group: ""
+          kind: ""
+          name: example-gateway
+    default/route-default:
       parents:
       - conditions:
         - lastTransitionTime: null
@@ -144,7 +191,26 @@ Statuses:
           kind: ""
           name: example-gateway
   policies:
-    TrafficPolicy/default/compression-policy:
+    TrafficPolicy/default/compression-custom:
+      ancestors:
+      - ancestorRef:
+          group: gateway.networking.k8s.io
+          kind: Gateway
+          name: example-gateway
+          namespace: default
+        conditions:
+        - lastTransitionTime: null
+          message: Policy accepted
+          reason: Valid
+          status: "True"
+          type: Accepted
+        - lastTransitionTime: null
+          message: Attached to all targets
+          reason: Attached
+          status: "True"
+          type: Attached
+        controllerName: kgateway.dev/kgateway
+    TrafficPolicy/default/compression-default:
       ancestors:
       - ancestorRef:
           group: gateway.networking.k8s.io
