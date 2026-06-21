@@ -1,6 +1,8 @@
 package trafficpolicy
 
 import (
+	"slices"
+
 	envoycorev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	brotlicompressorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/compression/brotli/compressor/v3"
 	gzipcompressorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/compression/gzip/compressor/v3"
@@ -25,7 +27,9 @@ type compressionIR struct {
 	enable bool
 	// libraries are the response compression codecs to offer, in preference order.
 	// Only meaningful when enable is true.
-	libraries []kgateway.CompressionLibrary
+	libraries        []kgateway.CompressionLibrary
+	minContentLength *uint32
+	contentTypes     []string
 }
 
 type decompressionIR struct {
@@ -48,7 +52,7 @@ func (c *compressionIR) Equals(other PolicySubIR) bool {
 	if c.enable != oc.enable {
 		return false
 	}
-	// When disabled, all codecs are turned off regardless of libraries.
+	// When disabled, all codecs are turned off regardless of the other settings.
 	if !c.enable {
 		return true
 	}
@@ -60,7 +64,13 @@ func (c *compressionIR) Equals(other PolicySubIR) bool {
 			return false
 		}
 	}
-	return true
+	if (c.minContentLength == nil) != (oc.minContentLength == nil) {
+		return false
+	}
+	if c.minContentLength != nil && *c.minContentLength != *oc.minContentLength {
+		return false
+	}
+	return slices.Equal(c.contentTypes, oc.contentTypes)
 }
 
 func (c *compressionIR) Validate() error { return nil }
@@ -92,7 +102,17 @@ func constructCompression(spec kgateway.TrafficPolicySpec, out *trafficPolicySpe
 		if len(libraries) == 0 {
 			libraries = []kgateway.CompressionLibrary{kgateway.CompressionGzip}
 		}
-		out.compression = &compressionIR{enable: (rc.Disable == nil), libraries: libraries}
+		var minContentLength *uint32
+		if rc.MinContentLengthBytes != nil && *rc.MinContentLengthBytes >= 0 {
+			v := uint32(*rc.MinContentLengthBytes)
+			minContentLength = &v
+		}
+		out.compression = &compressionIR{
+			enable:           (rc.Disable == nil),
+			libraries:        libraries,
+			minContentLength: minContentLength,
+			contentTypes:     rc.ContentTypes,
+		}
 	}
 
 	// Enable request decompression if not disabled
@@ -146,7 +166,7 @@ func (p *trafficPolicyPluginGwPass) handleCompression(fcn string, pCtxTypedFilte
 			p.compressorInChain[fcn] = append(p.compressorInChain[fcn], compressorEntry{
 				filterName: filterName,
 				library:    library,
-				compressor: newCompressor(library),
+				compressor: newCompressor(library, comp.minContentLength, comp.contentTypes),
 			})
 		}
 	}
@@ -176,8 +196,8 @@ func hasCompressorForLibrary(entries []compressorEntry, library kgateway.Compres
 
 // newCompressor builds a disabled baseline compressor filter for the given codec, using
 // Envoy defaults for the codec config (no quality/level knobs).
-func newCompressor(library kgateway.CompressionLibrary) *compressorv3.Compressor {
-	return &compressorv3.Compressor{
+func newCompressor(library kgateway.CompressionLibrary, minContentLength *uint32, contentTypes []string) *compressorv3.Compressor {
+	c := &compressorv3.Compressor{
 		RequestDirectionConfig: &compressorv3.Compressor_RequestDirectionConfig{
 			CommonConfig: &compressorv3.Compressor_CommonDirectionConfig{
 				Enabled: &envoycorev3.RuntimeFeatureFlag{
@@ -187,6 +207,14 @@ func newCompressor(library kgateway.CompressionLibrary) *compressorv3.Compressor
 		},
 		CompressorLibrary: compressorLibraryFor(library),
 	}
+	if minContentLength != nil || len(contentTypes) > 0 {
+		common := &compressorv3.Compressor_CommonDirectionConfig{ContentType: contentTypes}
+		if minContentLength != nil {
+			common.MinContentLength = wrapperspb.UInt32(*minContentLength)
+		}
+		c.ResponseDirectionConfig = &compressorv3.Compressor_ResponseDirectionConfig{CommonConfig: common}
+	}
+	return c
 }
 
 // compressorLibraryFor returns the Envoy compressor library extension config for the given

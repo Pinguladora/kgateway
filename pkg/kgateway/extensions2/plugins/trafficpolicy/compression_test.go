@@ -59,6 +59,24 @@ func TestCompressionIREquals(t *testing.T) {
 			b:    &compressionIR{enable: false, libraries: []kgateway.CompressionLibrary{kgateway.CompressionBrotli}},
 			want: true,
 		},
+		{
+			name: "different min content length is not equal",
+			a:    &compressionIR{enable: true, libraries: []kgateway.CompressionLibrary{kgateway.CompressionGzip}, minContentLength: new(uint32(100))},
+			b:    &compressionIR{enable: true, libraries: []kgateway.CompressionLibrary{kgateway.CompressionGzip}, minContentLength: new(uint32(200))},
+			want: false,
+		},
+		{
+			name: "different content types is not equal",
+			a:    &compressionIR{enable: true, libraries: []kgateway.CompressionLibrary{kgateway.CompressionGzip}, contentTypes: []string{"text/html"}},
+			b:    &compressionIR{enable: true, libraries: []kgateway.CompressionLibrary{kgateway.CompressionGzip}, contentTypes: []string{"application/json"}},
+			want: false,
+		},
+		{
+			name: "same content types and min length are equal",
+			a:    &compressionIR{enable: true, libraries: []kgateway.CompressionLibrary{kgateway.CompressionGzip}, minContentLength: new(uint32(100)), contentTypes: []string{"text/html"}},
+			b:    &compressionIR{enable: true, libraries: []kgateway.CompressionLibrary{kgateway.CompressionGzip}, minContentLength: new(uint32(100)), contentTypes: []string{"text/html"}},
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {
