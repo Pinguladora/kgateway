@@ -1123,6 +1123,28 @@ func TestBasic(t *testing.T) {
 		})
 	})
 
+	t.Run("TrafficPolicy compression per-route preference gets distinct filters (2 codecs)", func(t *testing.T) {
+		test(t, translatorTestCase{
+			inputFiles: []string{"traffic-policy/compression-per-route-preference-2way.yaml"},
+			outputFile: "traffic-policy/compression-per-route-preference-2way.yaml",
+			gwNN: types.NamespacedName{
+				Namespace: "default",
+				Name:      "example-gateway",
+			},
+		})
+	})
+
+	t.Run("TrafficPolicy compression per-route preference gets distinct filters (3 codecs)", func(t *testing.T) {
+		test(t, translatorTestCase{
+			inputFiles: []string{"traffic-policy/compression-per-route-preference.yaml"},
+			outputFile: "traffic-policy/compression-per-route-preference.yaml",
+			gwNN: types.NamespacedName{
+				Namespace: "default",
+				Name:      "example-gateway",
+			},
+		})
+	})
+
 	t.Run("TrafficPolicy compression codec conflict resolves by precedence", func(t *testing.T) {
 		test(t, translatorTestCase{
 			inputFiles: []string{"traffic-policy/compression-codec-conflict.yaml"},
