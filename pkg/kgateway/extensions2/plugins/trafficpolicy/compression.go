@@ -1,6 +1,10 @@
 package trafficpolicy
 
 import (
+	"fmt"
+	"hash/fnv"
+	"strconv"
+
 	envoycorev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	brotlicompressorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/compression/brotli/compressor/v3"
 	gzipcompressorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/compression/gzip/compressor/v3"
@@ -103,9 +107,8 @@ func constructCompression(spec kgateway.TrafficPolicySpec, out *trafficPolicySpe
 
 // compressorEntry is a single codec's compressor filter installed in a filter chain.
 type compressorEntry struct {
-	// filterName is the unique HTTP filter name for this codec's compressor.
+	// filterName is the unique HTTP filter name for this compressor.
 	filterName string
-	library    kgateway.CompressionLibrary
 	compressor *compressorv3.Compressor
 }
 
@@ -135,25 +138,35 @@ func (p *trafficPolicyPluginGwPass) handleCompression(fcn string, pCtxTypedFilte
 	if p.compressorInChain == nil {
 		p.compressorInChain = make(map[string][]compressorEntry)
 	}
-	// Offer each selected codec on the route. Envoy negotiates the codec to use against the
-	// request's Accept-Encoding header; the filter-chain order (preference order) breaks ties.
-	for _, library := range comp.libraries {
-		filterName := compressorFilterNameFor(library)
+	// Routes share one filter chain and Envoy decides q-value ties via the compressor's
+	// choose_first flag, not filter order. Key multi-codec filters per ordered list (so per-route
+	// choose_first can't leak between routes) and mark the first codec choose_first so it wins ties.
+	for i, library := range comp.libraries {
+		filterName := compressorFilterNameForList(library, comp.libraries)
 		pCtxTypedFilterConfig.AddTypedConfig(filterName, EnableFilterPerRoute())
 
-		// Ensure a disabled baseline compressor filter for this codec is present in the chain.
-		if !hasCompressorForLibrary(p.compressorInChain[fcn], library) {
+		if !hasCompressorNamed(p.compressorInChain[fcn], filterName) {
+			chooseFirst := len(comp.libraries) > 1 && i == 0
 			p.compressorInChain[fcn] = append(p.compressorInChain[fcn], compressorEntry{
 				filterName: filterName,
-				library:    library,
-				compressor: newCompressor(library),
+				compressor: newCompressor(library, chooseFirst),
 			})
 		}
 	}
 }
 
-// compressorFilterNameFor returns the unique HTTP filter name for a codec's compressor.
-// Gzip keeps the historical name so existing single-codec config stays byte-identical.
+// compressorFilterNameForList names a codec's filter; multi-codec lists append a hash of the
+// ordered list so routes with differing preferences get distinct filters.
+func compressorFilterNameForList(library kgateway.CompressionLibrary, libraries []kgateway.CompressionLibrary) string {
+	base := compressorFilterNameFor(library)
+	if len(libraries) <= 1 {
+		return base
+	}
+	return base + "." + listHash(libraries)
+}
+
+// compressorFilterNameFor returns the per-codec base name; gzip keeps the historical name for
+// backward compatibility.
 func compressorFilterNameFor(library kgateway.CompressionLibrary) string {
 	switch library {
 	case kgateway.CompressionBrotli:
@@ -165,9 +178,17 @@ func compressorFilterNameFor(library kgateway.CompressionLibrary) string {
 	}
 }
 
-func hasCompressorForLibrary(entries []compressorEntry, library kgateway.CompressionLibrary) bool {
+func listHash(libraries []kgateway.CompressionLibrary) string {
+	h := fnv.New32a()
+	for _, l := range libraries {
+		fmt.Fprintf(h, "%s;", l)
+	}
+	return strconv.FormatUint(uint64(h.Sum32()), 16)
+}
+
+func hasCompressorNamed(entries []compressorEntry, filterName string) bool {
 	for i := range entries {
-		if entries[i].library == library {
+		if entries[i].filterName == filterName {
 			return true
 		}
 	}
@@ -176,7 +197,7 @@ func hasCompressorForLibrary(entries []compressorEntry, library kgateway.Compres
 
 // newCompressor builds a disabled baseline compressor filter for the given codec, using
 // Envoy defaults for the codec config (no quality/level knobs).
-func newCompressor(library kgateway.CompressionLibrary) *compressorv3.Compressor {
+func newCompressor(library kgateway.CompressionLibrary, chooseFirst bool) *compressorv3.Compressor {
 	return &compressorv3.Compressor{
 		RequestDirectionConfig: &compressorv3.Compressor_RequestDirectionConfig{
 			CommonConfig: &compressorv3.Compressor_CommonDirectionConfig{
@@ -186,6 +207,7 @@ func newCompressor(library kgateway.CompressionLibrary) *compressorv3.Compressor
 			},
 		},
 		CompressorLibrary: compressorLibraryFor(library),
+		ChooseFirst:       chooseFirst,
 	}
 }
 

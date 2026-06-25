@@ -24,9 +24,10 @@ Listeners:
         '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
         httpFilters:
         - disabled: true
-          name: envoy.filters.http.compressor.brotli
+          name: envoy.filters.http.compressor.brotli.17966cc7
           typedConfig:
             '@type': type.googleapis.com/envoy.extensions.filters.http.compressor.v3.Compressor
+            chooseFirst: true
             compressorLibrary:
               name: envoy.compression.brotli.compressor
               typedConfig:
@@ -36,7 +37,7 @@ Listeners:
                 enabled:
                   defaultValue: false
         - disabled: true
-          name: envoy.filters.http.compressor
+          name: envoy.filters.http.compressor.17966cc7
           typedConfig:
             '@type': type.googleapis.com/envoy.extensions.filters.http.compressor.v3.Compressor
             compressorLibrary:
@@ -81,10 +82,10 @@ Routes:
         cluster: kube_default_example-svc_80
         clusterNotFoundResponseCode: INTERNAL_SERVER_ERROR
       typedPerFilterConfig:
-        envoy.filters.http.compressor:
+        envoy.filters.http.compressor.17966cc7:
           '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
           config: {}
-        envoy.filters.http.compressor.brotli:
+        envoy.filters.http.compressor.brotli.17966cc7:
           '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
           config: {}
 Statuses:
@@ -149,6 +150,11 @@ Statuses:
           reason: ResolvedRefs
           status: "True"
           type: ResolvedRefs
+        - lastTransitionTime: null
+          message: Successfully programmed Route
+          reason: Programmed
+          status: "True"
+          type: kgateway.dev/Programmed
         controllerName: kgateway
         parentRef:
           group: ""
