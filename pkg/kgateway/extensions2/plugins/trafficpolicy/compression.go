@@ -37,6 +37,10 @@ type compressionIR struct {
 	libraries        []kgateway.CompressionLibrary
 	minContentLength *uint32
 	contentTypes     []string
+	// disableOnEtag skips compression when the response has an ETag.
+	// weakenEtagOnCompress keeps the ETag but weakens it when compressing.
+	disableOnEtag        bool
+	weakenEtagOnCompress bool
 }
 
 type decompressionIR struct {
@@ -77,6 +81,9 @@ func (c *compressionIR) Equals(other PolicySubIR) bool {
 		return false
 	}
 	if c.minContentLength != nil && *c.minContentLength != *oc.minContentLength {
+		return false
+	}
+	if c.disableOnEtag != oc.disableOnEtag || c.weakenEtagOnCompress != oc.weakenEtagOnCompress {
 		return false
 	}
 	return slices.Equal(sortedContentTypes(c.contentTypes), sortedContentTypes(oc.contentTypes))
@@ -123,10 +130,12 @@ func constructCompression(spec kgateway.TrafficPolicySpec, out *trafficPolicySpe
 			minContentLength = &v
 		}
 		out.compression = &compressionIR{
-			enable:           (rc.Disable == nil),
-			libraries:        libraries,
-			minContentLength: minContentLength,
-			contentTypes:     rc.ContentTypes,
+			enable:               (rc.Disable == nil),
+			libraries:            libraries,
+			minContentLength:     minContentLength,
+			contentTypes:         rc.ContentTypes,
+			disableOnEtag:        rc.DisableOnEtag != nil && *rc.DisableOnEtag,
+			weakenEtagOnCompress: rc.WeakenEtagOnCompress != nil && *rc.WeakenEtagOnCompress,
 		}
 	}
 
@@ -188,13 +197,13 @@ func (p *trafficPolicyPluginGwPass) handleCompression(fcn string, pCtxTypedFilte
 	// with many routes each using distinct minContentLengthBytes/contentTypes combinations will
 	// grow one compressor filter per combination per codec on its filter chain.
 	for _, library := range comp.libraries {
-		filterName := compressorFilterNameForConfig(library, comp.minContentLength, comp.contentTypes)
+		filterName := compressorFilterNameForConfig(library, comp)
 		pCtxTypedFilterConfig.AddTypedConfig(filterName, EnableFilterPerRoute())
 
 		if !hasCompressorNamed(p.compressorInChain[fcn], filterName) {
 			p.compressorInChain[fcn] = append(p.compressorInChain[fcn], compressorEntry{
 				filterName: filterName,
-				compressor: newCompressor(library, comp.minContentLength, comp.contentTypes),
+				compressor: newCompressor(library, comp),
 			})
 		}
 	}
@@ -220,7 +229,7 @@ func (p *trafficPolicyPluginGwPass) disableBroadScopeCompressionOnOptedOutRoutes
 			continue
 		}
 		for _, library := range comp.libraries {
-			name := compressorFilterNameForConfig(library, comp.minContentLength, comp.contentTypes)
+			name := compressorFilterNameForConfig(library, comp)
 			if route.TypedPerFilterConfig == nil {
 				route.TypedPerFilterConfig = map[string]*anypb.Any{}
 			}
@@ -235,12 +244,18 @@ func (p *trafficPolicyPluginGwPass) disableBroadScopeCompressionOnOptedOutRoutes
 // Default settings keep the codec's base name so existing config stays byte-identical. Custom
 // settings get a deterministic suffix so routes with differing settings do not collide on the
 // shared filter chain.
-func compressorFilterNameForConfig(library kgateway.CompressionLibrary, minContentLength *uint32, contentTypes []string) string {
+func compressorFilterNameForConfig(library kgateway.CompressionLibrary, comp *compressionIR) string {
 	base := compressorFilterNameFor(library)
-	if minContentLength == nil && len(contentTypes) == 0 {
+	if !comp.hasCustomResponseSettings() {
 		return base
 	}
-	return base + "." + settingsHash(minContentLength, contentTypes)
+	return base + "." + settingsHash(comp)
+}
+
+// hasCustomResponseSettings reports whether any response-direction setting deviates from Envoy's
+// defaults. When none do, the codec keeps its bare filter name so existing config is unchanged.
+func (c *compressionIR) hasCustomResponseSettings() bool {
+	return c.minContentLength != nil || len(c.contentTypes) > 0 || c.disableOnEtag || c.weakenEtagOnCompress
 }
 
 // compressorFilterNameFor returns the base per-codec filter name. Gzip uses the bare compressor
@@ -267,13 +282,19 @@ func hasCompressorNamed(entries []compressorEntry, filterName string) bool {
 
 // settingsHash is a deterministic short hash of the response-direction settings, used to give
 // compressors with differing settings distinct filter names.
-func settingsHash(minContentLength *uint32, contentTypes []string) string {
+func settingsHash(comp *compressionIR) string {
 	h := fnv.New64a()
-	if minContentLength != nil {
-		fmt.Fprintf(h, "min=%d;", *minContentLength)
+	if comp.minContentLength != nil {
+		fmt.Fprintf(h, "min=%d;", *comp.minContentLength)
 	}
-	for _, ct := range sortedContentTypes(contentTypes) {
+	for _, ct := range sortedContentTypes(comp.contentTypes) {
 		fmt.Fprintf(h, "ct=%s;", ct)
+	}
+	if comp.disableOnEtag {
+		fmt.Fprintf(h, "etag_disable=1;")
+	}
+	if comp.weakenEtagOnCompress {
+		fmt.Fprintf(h, "etag_weaken=1;")
 	}
 	return strconv.FormatUint(h.Sum64(), 16)
 }
@@ -292,7 +313,7 @@ func sortedContentTypes(contentTypes []string) []string {
 // newCompressor builds a disabled baseline compressor filter for the given codec. The codec
 // config is left at Envoy defaults (no quality/level knobs). When min content length or content
 // types are set, they are applied to the response direction.
-func newCompressor(library kgateway.CompressionLibrary, minContentLength *uint32, contentTypes []string) *compressorv3.Compressor {
+func newCompressor(library kgateway.CompressionLibrary, comp *compressionIR) *compressorv3.Compressor {
 	c := &compressorv3.Compressor{
 		RequestDirectionConfig: &compressorv3.Compressor_RequestDirectionConfig{
 			CommonConfig: &compressorv3.Compressor_CommonDirectionConfig{
@@ -303,12 +324,19 @@ func newCompressor(library kgateway.CompressionLibrary, minContentLength *uint32
 		},
 		CompressorLibrary: compressorLibraryFor(library),
 	}
-	if minContentLength != nil || len(contentTypes) > 0 {
-		common := &compressorv3.Compressor_CommonDirectionConfig{ContentType: sortedContentTypes(contentTypes)}
-		if minContentLength != nil {
-			common.MinContentLength = wrapperspb.UInt32(*minContentLength)
+	if comp.hasCustomResponseSettings() {
+		resp := &compressorv3.Compressor_ResponseDirectionConfig{
+			DisableOnEtagHeader:  comp.disableOnEtag,
+			WeakenEtagOnCompress: comp.weakenEtagOnCompress,
 		}
-		c.ResponseDirectionConfig = &compressorv3.Compressor_ResponseDirectionConfig{CommonConfig: common}
+		if comp.minContentLength != nil || len(comp.contentTypes) > 0 {
+			common := &compressorv3.Compressor_CommonDirectionConfig{ContentType: sortedContentTypes(comp.contentTypes)}
+			if comp.minContentLength != nil {
+				common.MinContentLength = wrapperspb.UInt32(*comp.minContentLength)
+			}
+			resp.CommonConfig = common
+		}
+		c.ResponseDirectionConfig = resp
 	}
 	return c
 }
