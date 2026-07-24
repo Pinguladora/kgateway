@@ -760,6 +760,21 @@ type ResponseCompression struct {
 	// +kubebuilder:validation:items:MaxLength=256
 	ContentTypes []string `json:"contentTypes,omitempty"`
 
+	// DisableOnEtag skips compression for responses that carry an `ETag` header, keeping the entity
+	// tag intact as a strong validator for downstream caches. When unset or false, Envoy compresses
+	// those responses and removes strong `ETag` values unless WeakenEtagOnCompress is set.
+	// Defaults to false.
+	// +optional
+	DisableOnEtag *bool `json:"disableOnEtag,omitempty"`
+
+	// WeakenEtagOnCompress keeps the `ETag` on a compressed response but weakens it, by prepending
+	// `W/`. This lets caching and conditional requests keep working while signaling that compression
+	// changed the body. When both this and DisableOnEtag are true, this takes precedence, so the
+	// response is compressed and its `ETag` is weakened.
+	// Defaults to false.
+	// +optional
+	WeakenEtagOnCompress *bool `json:"weakenEtagOnCompress,omitempty"`
+
 	// Disables compression.
 	// +optional
 	Disable *shared.PolicyDisable `json:"disable,omitempty"`

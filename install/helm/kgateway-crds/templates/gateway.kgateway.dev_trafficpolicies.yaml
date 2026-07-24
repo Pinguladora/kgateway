@@ -497,6 +497,13 @@ spec:
                       disable:
                         description: Disables compression.
                         type: object
+                      disableOnEtag:
+                        description: |-
+                          DisableOnEtag skips compression for responses that carry an `ETag` header, keeping the entity
+                          tag intact as a strong validator for downstream caches. When unset or false, Envoy compresses
+                          those responses and removes strong `ETag` values unless WeakenEtagOnCompress is set.
+                          Defaults to false.
+                        type: boolean
                       libraries:
                         default:
                         - Gzip
@@ -530,6 +537,14 @@ spec:
                         format: int32
                         minimum: 0
                         type: integer
+                      weakenEtagOnCompress:
+                        description: |-
+                          WeakenEtagOnCompress keeps the `ETag` on a compressed response but weakens it, by prepending
+                          `W/`. This lets caching and conditional requests keep working while signaling that compression
+                          changed the body. When both this and DisableOnEtag are true, this takes precedence, so the
+                          response is compressed and its `ETag` is weakened.
+                          Defaults to false.
+                        type: boolean
                     type: object
                 type: object
                 x-kubernetes-validations:

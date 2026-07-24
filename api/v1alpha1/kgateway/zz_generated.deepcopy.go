@@ -4911,6 +4911,16 @@ func (in *ResponseCompression) DeepCopyInto(out *ResponseCompression) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.DisableOnEtag != nil {
+		in, out := &in.DisableOnEtag, &out.DisableOnEtag
+		*out = new(bool)
+		**out = **in
+	}
+	if in.WeakenEtagOnCompress != nil {
+		in, out := &in.WeakenEtagOnCompress, &out.WeakenEtagOnCompress
+		*out = new(bool)
+		**out = **in
+	}
 	if in.Disable != nil {
 		in, out := &in.Disable, &out.Disable
 		*out = new(shared.PolicyDisable)
