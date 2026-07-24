@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"k8s.io/utils/ptr"
 
 	"github.com/kgateway-dev/kgateway/v2/api/v1alpha1/kgateway"
 )
@@ -89,6 +90,24 @@ func TestCompressionIREquals(t *testing.T) {
 			b:    &compressionIR{enable: true, libraries: []kgateway.CompressionLibrary{kgateway.CompressionGzip}, contentTypes: []string{"application/json", "text/html"}},
 			want: true,
 		},
+		{
+			name: "different disableOnEtag is not equal",
+			a:    &compressionIR{enable: true, libraries: []kgateway.CompressionLibrary{kgateway.CompressionGzip}, disableOnEtag: true},
+			b:    &compressionIR{enable: true, libraries: []kgateway.CompressionLibrary{kgateway.CompressionGzip}},
+			want: false,
+		},
+		{
+			name: "different weakenEtagOnCompress is not equal",
+			a:    &compressionIR{enable: true, libraries: []kgateway.CompressionLibrary{kgateway.CompressionGzip}, weakenEtagOnCompress: true},
+			b:    &compressionIR{enable: true, libraries: []kgateway.CompressionLibrary{kgateway.CompressionGzip}},
+			want: false,
+		},
+		{
+			name: "same etag handling is equal",
+			a:    &compressionIR{enable: true, libraries: []kgateway.CompressionLibrary{kgateway.CompressionGzip}, disableOnEtag: true, weakenEtagOnCompress: true},
+			b:    &compressionIR{enable: true, libraries: []kgateway.CompressionLibrary{kgateway.CompressionGzip}, disableOnEtag: true, weakenEtagOnCompress: true},
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -101,17 +120,26 @@ func TestCompressionIREquals(t *testing.T) {
 func TestSettingsHash(t *testing.T) {
 	// Content-type order must not affect the hash, so equivalent allowlists share a filter.
 	assert.Equal(t,
-		settingsHash(u32(100), []string{"text/html", "application/json"}),
-		settingsHash(u32(100), []string{"application/json", "text/html"}),
+		settingsHash(&compressionIR{minContentLength: u32(100), contentTypes: []string{"text/html", "application/json"}}),
+		settingsHash(&compressionIR{minContentLength: u32(100), contentTypes: []string{"application/json", "text/html"}}),
 	)
 	// Different settings must produce different hashes so routes get distinct filters.
 	assert.NotEqual(t,
-		settingsHash(u32(100), []string{"text/html"}),
-		settingsHash(u32(200), []string{"text/html"}),
+		settingsHash(&compressionIR{minContentLength: u32(100), contentTypes: []string{"text/html"}}),
+		settingsHash(&compressionIR{minContentLength: u32(200), contentTypes: []string{"text/html"}}),
 	)
 	assert.NotEqual(t,
-		settingsHash(u32(100), nil),
-		settingsHash(nil, []string{"text/html"}),
+		settingsHash(&compressionIR{minContentLength: u32(100)}),
+		settingsHash(&compressionIR{contentTypes: []string{"text/html"}}),
+	)
+	// The etag settings change the hash, so routes with different etag handling get distinct filters.
+	assert.NotEqual(t,
+		settingsHash(&compressionIR{disableOnEtag: true}),
+		settingsHash(&compressionIR{weakenEtagOnCompress: true}),
+	)
+	assert.NotEqual(t,
+		settingsHash(&compressionIR{}),
+		settingsHash(&compressionIR{disableOnEtag: true}),
 	)
 }
 
@@ -241,6 +269,41 @@ func TestConstructCompressionLibraries(t *testing.T) {
 			if assert.NotNil(t, out.compression) {
 				assert.True(t, out.compression.enable)
 				assert.Equal(t, tt.wantLibs, out.compression.libraries)
+			}
+		})
+	}
+}
+
+func TestConstructCompressionEtag(t *testing.T) {
+	tests := []struct {
+		name        string
+		disable     *bool
+		weaken      *bool
+		wantDisable bool
+		wantWeaken  bool
+	}{
+		{name: "unset etag fields default to false"},
+		{name: "disableOnEtag true", disable: ptr.To(true), wantDisable: true},                                //nolint:modernize
+		{name: "weakenEtagOnCompress true", weaken: ptr.To(true), wantWeaken: true},                           //nolint:modernize
+		{name: "explicit false stays false", disable: ptr.To(false), weaken: ptr.To(false)},                   //nolint:modernize
+		{name: "both true", disable: ptr.To(true), weaken: ptr.To(true), wantDisable: true, wantWeaken: true}, //nolint:modernize
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := &trafficPolicySpecIr{}
+			constructCompression(kgateway.TrafficPolicySpec{
+				Compression: &kgateway.Compression{
+					ResponseCompression: &kgateway.ResponseCompression{
+						DisableOnEtag:        tt.disable,
+						WeakenEtagOnCompress: tt.weaken,
+					},
+				},
+			}, out)
+
+			if assert.NotNil(t, out.compression) {
+				assert.Equal(t, tt.wantDisable, out.compression.disableOnEtag)
+				assert.Equal(t, tt.wantWeaken, out.compression.weakenEtagOnCompress)
 			}
 		})
 	}

@@ -1178,6 +1178,17 @@ func TestBasic(t *testing.T) {
 		})
 	})
 
+	t.Run("TrafficPolicy with compression etag handling", func(t *testing.T) {
+		test(t, translatorTestCase{
+			inputFiles: []string{"traffic-policy/compression-etag-route.yaml"},
+			outputFile: "traffic-policy/compression-etag-route.yaml",
+			gwNN: types.NamespacedName{
+				Namespace: "default",
+				Name:      "example-gateway",
+			},
+		})
+	})
+
 	t.Run("TrafficPolicy with compression content-type and min-length", func(t *testing.T) {
 		test(t, translatorTestCase{
 			inputFiles: []string{"traffic-policy/compression-content-type-min-length-route.yaml"},
@@ -1226,6 +1237,17 @@ func TestBasic(t *testing.T) {
 		test(t, translatorTestCase{
 			inputFiles: []string{"traffic-policy/compression-disable-broad-scope.yaml"},
 			outputFile: "traffic-policy/compression-disable-broad-scope.yaml",
+			gwNN: types.NamespacedName{
+				Namespace: "default",
+				Name:      "example-gateway",
+			},
+		})
+	})
+
+	t.Run("TrafficPolicy route disable overrides broader-scope compression etag handling", func(t *testing.T) {
+		test(t, translatorTestCase{
+			inputFiles: []string{"traffic-policy/compression-disable-broad-scope-etag.yaml"},
+			outputFile: "traffic-policy/compression-disable-broad-scope-etag.yaml",
 			gwNN: types.NamespacedName{
 				Namespace: "default",
 				Name:      "example-gateway",
