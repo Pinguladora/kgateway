@@ -73,6 +73,9 @@ type HttpListenerPolicyIr struct {
 	forwardClientCertMode         *envoy_hcm.HttpConnectionManager_ForwardClientCertDetails
 	setCurrentClientCertDetails   *envoy_hcm.HttpConnectionManager_SetCurrentClientCertDetails
 	stripHostPortMode             *kgateway.StripHostPortMode
+	// responseCompressionCodecPreference is the gateway's preferred codec order (most preferred
+	// first) used to break equal-weight Accept-Encoding ties via the compressor choose_first flag.
+	responseCompressionCodecPreference []kgateway.CompressionLibrary
 }
 
 func (d *HttpListenerPolicyIr) Equals(in any) bool {
@@ -224,6 +227,10 @@ func (d *HttpListenerPolicyIr) Equals(in any) bool {
 	}
 
 	if !cmputils.PointerValsEqual(d.stripHostPortMode, d2.stripHostPortMode) {
+		return false
+	}
+
+	if !slices.Equal(d.responseCompressionCodecPreference, d2.responseCompressionCodecPreference) {
 		return false
 	}
 
@@ -413,6 +420,8 @@ func NewHttpListenerPolicy(krtctx krt.HandlerContext, commoncol *collections.Com
 		forwardClientCertMode:         forwardClientCertMode,
 		setCurrentClientCertDetails:   setCurrentClientCertDetails,
 		stripHostPortMode:             h.StripHostPortMode,
+
+		responseCompressionCodecPreference: h.ResponseCompressionCodecPreference,
 	}, errs
 }
 

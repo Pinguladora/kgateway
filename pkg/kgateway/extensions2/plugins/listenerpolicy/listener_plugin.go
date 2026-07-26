@@ -583,6 +583,12 @@ func (p *listenerPolicyPluginGwPass) ApplyHCM(
 		}
 	}
 
+	// Apply the gateway's response compression codec preference to the compressor filters that the
+	// trafficpolicy plugin already installed on this HCM. Runs last, once the filter chain is assembled.
+	if err := applyResponseCompressionCodecPreference(out, policy.responseCompressionCodecPreference); err != nil {
+		return err
+	}
+
 	return nil
 }
 
