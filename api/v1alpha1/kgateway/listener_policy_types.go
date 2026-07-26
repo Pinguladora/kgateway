@@ -339,6 +339,17 @@ type HTTPSettings struct {
 	// +kubebuilder:validation:Enum=MatchingPort;AnyPort
 	// +optional
 	StripHostPortMode *StripHostPortMode `json:"stripHostPortMode,omitempty"`
+
+	// ResponseCompressionCodecPreference sets the gateway's preferred order for response
+	// compression codecs, most preferred first. Envoy uses this order to pick one, so a stronger
+	// codec such as Brotli or Zstd can win over gzip. A TrafficPolicy still decides which codecs
+	// are offered on a route. This only breaks ties for clients that do not express a preference.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=3
+	// +kubebuilder:validation:XValidation:rule="self.all(x, self.exists_one(y, y == x))",message="responseCompressionCodecPreference must not contain duplicates"
+	ResponseCompressionCodecPreference []CompressionLibrary `json:"responseCompressionCodecPreference,omitempty"`
 }
 
 // AccessLog represents the top-level access log configuration.

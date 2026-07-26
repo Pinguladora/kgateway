@@ -2640,6 +2640,27 @@ spec:
                   PreserveHttp1HeaderCase determines whether to preserve the case of HTTP1 request headers.
                   See here for more information: https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/header_casing
                 type: boolean
+              responseCompressionCodecPreference:
+                description: |-
+                  ResponseCompressionCodecPreference sets the gateway's preferred order for response
+                  compression codecs, most preferred first. Envoy uses this order to pick one, so a stronger
+                  codec such as Brotli or Zstd can win over gzip. A TrafficPolicy still decides which codecs
+                  are offered on a route. This only breaks ties for clients that do not express a preference.
+                items:
+                  description: CompressionLibrary identifies a compression codec used
+                    to compress responses or decompress requests.
+                  enum:
+                  - Gzip
+                  - Brotli
+                  - Zstd
+                  type: string
+                maxItems: 3
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: atomic
+                x-kubernetes-validations:
+                - message: responseCompressionCodecPreference must not contain duplicates
+                  rule: self.all(x, self.exists_one(y, y == x))
               serverHeaderTransformation:
                 description: |-
                   ServerHeaderTransformation determines how the server header is transformed.
