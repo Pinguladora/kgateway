@@ -68,6 +68,9 @@ func baseHarnessHttpListenerPolicyIr() *HttpListenerPolicyIr {
 		},
 		stripHostPortMode: new(kgateway.StripMatchingHostPortMode),
 		serverName:        new("envoy"),
+		responseCompressionCodecPreference: []kgateway.CompressionLibrary{
+			kgateway.CompressionGzip, kgateway.CompressionBrotli,
+		},
 	}
 }
 
@@ -216,6 +219,12 @@ func TestHarnessHttpListenerPolicyIrEquals(t *testing.T) {
 		{
 			Field:  "serverName",
 			Mutate: func(d **HttpListenerPolicyIr) { (*d).serverName = new("other-server") },
+		},
+		{
+			Field: "responseCompressionCodecPreference",
+			Mutate: func(d **HttpListenerPolicyIr) {
+				(*d).responseCompressionCodecPreference = []kgateway.CompressionLibrary{kgateway.CompressionZstd}
+			},
 		},
 	}
 

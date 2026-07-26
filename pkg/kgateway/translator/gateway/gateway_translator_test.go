@@ -1156,6 +1156,28 @@ func TestBasic(t *testing.T) {
 		})
 	})
 
+	t.Run("HTTPListenerPolicy sets response compression codec preference", func(t *testing.T) {
+		test(t, translatorTestCase{
+			inputFiles: []string{"traffic-policy/compression-codec-preference.yaml"},
+			outputFile: "traffic-policy/compression-codec-preference.yaml",
+			gwNN: types.NamespacedName{
+				Namespace: "default",
+				Name:      "example-gateway",
+			},
+		})
+	})
+
+	t.Run("HTTPListenerPolicy codec preference coexists with a route-level compression disable", func(t *testing.T) {
+		test(t, translatorTestCase{
+			inputFiles: []string{"traffic-policy/compression-codec-preference-disable.yaml"},
+			outputFile: "traffic-policy/compression-codec-preference-disable.yaml",
+			gwNN: types.NamespacedName{
+				Namespace: "default",
+				Name:      "example-gateway",
+			},
+		})
+	})
+
 	t.Run("TrafficPolicy compression codec conflict resolves by precedence", func(t *testing.T) {
 		test(t, translatorTestCase{
 			inputFiles: []string{"traffic-policy/compression-codec-conflict.yaml"},
